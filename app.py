@@ -25,21 +25,22 @@ def chat_completions():
         if isinstance(last_msg, dict):
             prompt = last_msg.get('content', "")
     
-    # Generate a unique session key for the proxy turn
-    # This prevents the "Pass --to or --agent" error by creating an isolated session
+    # Generate a unique session id for the proxy turn
+    # Use --session-id instead of --session-key
     session_id = f"proxy-{uuid.uuid4()}"
     
     try:
         # Run openclaw agent command
-        # We add --agent main and a unique session key to ensure execution works headlessly
+        # We add --agent main and a unique session-id to ensure execution works headlessly
         cmd = [
             "openclaw", "agent", 
             "--agent", "main",
-            "--session-key", session_id,
+            "--session-id", session_id,
             "--message", str(prompt),
             "--json"
         ]
         
+        # We use check=True to raise an exception on non-zero exit codes
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         
         try:
