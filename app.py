@@ -25,18 +25,21 @@ def chat_completions():
         if isinstance(last_msg, dict):
             prompt = last_msg.get('content', "")
     
-    # Generate a session key for tracking
-    session_id = str(uuid.uuid4())
+    # Generate a unique session key for the proxy turn
+    # This prevents the "Pass --to or --agent" error by creating an isolated session
+    session_id = f"proxy-{uuid.uuid4()}"
     
     try:
-        # Run openclaw agent command using list format for subprocess (security best practice)
+        # Run openclaw agent command
+        # We add --agent main and a unique session key to ensure execution works headlessly
         cmd = [
             "openclaw", "agent", 
+            "--agent", "main",
+            "--session-key", session_id,
             "--message", str(prompt),
             "--json"
         ]
         
-        # Ensure we are executing with correct env if needed
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         
         try:
@@ -44,14 +47,15 @@ def chat_completions():
         except json.JSONDecodeError:
             return json.dumps({
                 "error": "Failed to parse OpenClaw response", 
-                "raw": result.stdout
+                "raw": result.stdout,
+                "stderr": result.stderr
             }), 500
         
         # Map OpenClaw response back to OpenAI format
         openai_response = {
             "id": f"chatcmpl-{session_id}",
             "object": "chat.completion",
-            "created": 1771500000, # Approximate timestamp
+            "created": 1771500000,
             "model": model,
             "choices": [
                 {
@@ -76,6 +80,7 @@ def chat_completions():
         return json.dumps({
             "error": "OpenClaw agent execution failed", 
             "message": str(e),
+            "stdout": e.stdout,
             "stderr": e.stderr
         }), 500
     except Exception as e:
@@ -83,7 +88,6 @@ def chat_completions():
 
 @app.route('/v1/models', methods=['GET'])
 def list_models():
-    # Return a basic model list to satisfy discovery
     models = {
         "object": "list",
         "data": [
@@ -98,5 +102,4 @@ def list_models():
     return json.dumps(models), 200, {'Content-Type': 'application/json'}
 
 if __name__ == '__main__':
-    # Default proxy port is 18790
     app.run(host='0.0.0.0', port=18790)
