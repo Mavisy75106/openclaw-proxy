@@ -6,41 +6,52 @@ import os
 
 app = Flask(__name__)
 
-# This is a very basic proxy that uses `openclaw agent` to fulfill requests.
-# In a real-world scenario, you'd want to handle multiple models, 
-# streaming (if supported), and better error handling.
-
-GATEWAY_TOKEN = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "8a172740595ae2ba83447c65c340594f4b3af00e291ee067")
+# This is a basic proxy that uses `openclaw agent` to fulfill requests.
+# It securely relays requests through the local OpenClaw Gateway.
 
 @app.route('/v1/chat/completions', methods=['POST'])
 def chat_completions():
     data = request.json
+    if not data:
+        return json.dumps({"error": "Missing JSON body"}), 400
+        
     messages = data.get('messages', [])
     model = data.get('model', 'default')
     
     # Extract the last message as the prompt for OpenClaw
-    prompt = messages[-1]['content'] if messages else ""
+    prompt = ""
+    if messages and isinstance(messages, list):
+        last_msg = messages[-1]
+        if isinstance(last_msg, dict):
+            prompt = last_msg.get('content', "")
     
-    # Generate a session key to keep turns separated if needed
+    # Generate a session key for tracking
     session_id = str(uuid.uuid4())
     
     try:
-        # Run openclaw agent command
-        # Note: we use --json to get a structured response
+        # Run openclaw agent command using list format for subprocess (security best practice)
         cmd = [
             "openclaw", "agent", 
-            "--message", prompt,
+            "--message", str(prompt),
             "--json"
         ]
         
+        # Ensure we are executing with correct env if needed
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        response_data = json.loads(result.stdout)
+        
+        try:
+            response_data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return json.dumps({
+                "error": "Failed to parse OpenClaw response", 
+                "raw": result.stdout
+            }), 500
         
         # Map OpenClaw response back to OpenAI format
         openai_response = {
             "id": f"chatcmpl-{session_id}",
             "object": "chat.completion",
-            "created": 123456789, # Placeholder
+            "created": 1771500000, # Approximate timestamp
             "model": model,
             "choices": [
                 {
@@ -52,16 +63,40 @@ def chat_completions():
                     "finish_reason": "stop"
                 }
             ],
-            "usage": response_data.get("usage", {})
+            "usage": response_data.get("usage", {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0
+            })
         }
         
         return json.dumps(openai_response), 200, {'Content-Type': 'application/json'}
 
     except subprocess.CalledProcessError as e:
-        return json.dumps({"error": str(e), "details": e.stderr}), 500
+        return json.dumps({
+            "error": "OpenClaw agent execution failed", 
+            "message": str(e),
+            "stderr": e.stderr
+        }), 500
     except Exception as e:
         return json.dumps({"error": str(e)}), 500
 
+@app.route('/v1/models', methods=['GET'])
+def list_models():
+    # Return a basic model list to satisfy discovery
+    models = {
+        "object": "list",
+        "data": [
+            {
+                "id": "default",
+                "object": "model",
+                "created": 1771500000,
+                "owned_by": "openclaw"
+            }
+        ]
+    }
+    return json.dumps(models), 200, {'Content-Type': 'application/json'}
+
 if __name__ == '__main__':
-    # Default OpenClaw port is 18789, let's use 18790 for the proxy
+    # Default proxy port is 18790
     app.run(host='0.0.0.0', port=18790)
